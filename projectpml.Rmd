@@ -1,0 +1,159 @@
+---
+title: "Prediction Assignment Writeup"
+author: "Carlos Yunda"
+date: "March 17, 2018"
+output: html_document
+        
+---
+# DATA LOADING
+
+First step is to load the data to R in order to perform some exploratory analysis
+
+```{r, echo=TRUE}
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv","pml-training.csv")
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv","pml-testing.csv")
+
+training<-read.csv("pml-training.csv")
+testing<-read.csv("pml-testing.csv")
+
+```
+
+# EXPLORATORY ANALYSIS
+
+In this part the data is going to be examined regarding the variable to be predicted.
+
+```{r, echo=TRUE}
+str(training$classe)
+```
+
+It appears that the variable to be predicted is a factor 5 level variable.
+
+
+# MODEL SELECTION
+
+Since we don't know anything about how the other variables interact to achieve the class selection, then the method we are going to use to select the model is going to be to try various approaches and check on the errors produced. The selected model will be the one with the highest accuracy.
+
+Since there is a large number of variables (160), the first step is to try to reduce this number. The first step will be to check the document to see if there are some relevant information.
+
+The method will be to select the features based on a decision tree like random forest and boosting. Then we will try a combination of linear regression with decision tree will to check if we can configure a better selected model.
+
+## TIDY DATA - DOCUMENT PAPER
+
+From the document, it is informed that there are 12 variable that they consider more relevant to explain the model. These 12 are:
+
+* "(1) Sensor on the Belt: discretization of the module of acceleration vector, variance of pitch, and variance of roll; (2) Sensor on the left thigh: module of acceleration vector, discretization, and variance of pitch; (3) Sensor on the right ankle: variance of pitch, and variance of roll; (4) Sensor on the right arm: discretization of the module of acceleration vector; From all sensors: average acceleration and standard deviation of acceleration. "*
+
+To identify the variables we have to subset by column name:
+```{r, echo=TRUE}
+# Subset by finishing with belt
+
+a<-grep("belt$",names(training))
+belt<-subset(training, select=a)
+head(belt)
+```
+
+From the data it seems that the roll-pitch-yaw and aceleration are the most consistent data, therefore these columns are selected.
+```{r, echo=TRUE}
+belt<-belt[,c(1,2,3,4)]
+```
+
+Now considering the dumbbell
+```{r}
+# Subset by finishing with dumbbell
+
+a<-grep("dumbbell$",names(training))
+dumbbell<-subset(training, select=a)
+dumbbell<-dumbbell[,c(1,2,3,19)]
+```
+
+Now considering the forearm
+```{r}
+# Subset by finishing with forearm
+
+a<-grep("forearm$",names(training))
+forearm<-subset(training, select=a)
+forearm<-forearm[,c(1,2,3,19)]
+```
+
+Now considering the arm
+```{r}
+# Subset by finishing with arm
+
+a<-grep("arm$",names(training))
+arm<-subset(training, select=a)
+arm<-arm[,c(1,2,3,4)]
+```
+
+Therefore we end up with 16 variables + classe to analyze.
+```{r}
+training2<-cbind(classe=training$classe,belt,dumbbell,forearm,arm)
+```
+
+## DECISION TREE
+
+The first approach for feature selection is to run random forest and boosting and compare results to select the most relevant variables
+
+```{r, echo=TRUE}
+library(randomForest)
+fit1<-randomForest(classe ~.,data = training2, na.action=na.exclude)
+fit1$importance
+```
+
+The variable importance indicates that the acceleration variables have less relevance to explain classe. Also belt and forearm variables seem to be more relevant. Now lets check on the model accuracy on random forest for the testing data. Unfortunately, testing data set does not have a classe variable. Therefore we need to split the training2 data into 2 data sets to achieve training, and test.
+
+```{r}
+d1<-training2
+library(caret)
+inTrain<-createDataPartition(y=d1$classe,p=0.7, list = FALSE)
+training2<-d1[inTrain,]
+testing2<-d1[-inTrain,]
+
+
+```
+
+Now we can refit the random forest model including test data.
+```{r}
+fit1<-randomForest(classe ~.,data = training2, xtest=testing2[,-1], ytest=testing2$classe, na.action=na.exclude, keep.forest=TRUE)
+fit1$confusion
+```
+
+Model Accuracy
+
+```{r}
+1-mean(fit1$confusion[,6])
+```
+
+
+Now let us explore LDA and GBM in order to search for a better accuracy. These two models were fit using caret package but computer time was excesive.
+
+```{r}
+# LDA
+library(MASS)
+fit16<-lda(classe ~.,data = training2, na.action=na.exclude)
+table(predict(fit16, testing2)$class, testing2$classe)
+
+
+```
+
+```{r}
+# GBM
+library(gbm)
+fit12<-gbm(classe ~.,data = training2)
+head(predict(fit12, newdata=testing2, n.trees = 500))
+```
+
+
+As we can see from the results, with a single Random Forest model we have obtained a better fit. Therefore we proceed on tuning the random forest parameters to improve accuracy. 
+
+
+```{r}
+fit1v1<-randomForest(classe ~.,data = training2, xtest=testing2[,-1], ytest=testing2$classe, na.action=na.exclude, keep.forest=TRUE, mtry = 4,ntree = 550 )
+1-mean(fit1v1$confusion[,6])
+```
+
+Given that the parameters obtained in our first model are better we will keep it as in performs 0.9778 accuracy.
+
+
+
+```
+
